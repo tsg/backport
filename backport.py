@@ -9,6 +9,7 @@ import re
 from subprocess import check_call, call, check_output
 import requests
 from pprint import pprint
+import json
 
 usage = """
 Example usage:
@@ -59,6 +60,8 @@ def main():
                         help="Remote to which to push (your fork)")
     parser.add_argument("--project", default="elastic/beats",
                         help="The Github project")
+    parser.add_argument("--no_version", action="store_true",
+                        help="Skip setting version labels.")
     args = parser.parse_args()
 
     print(args)
@@ -79,41 +82,45 @@ def main():
         print("PR is not merged")
         return 1
 
+    if not args.commit_hashes:
+        args.commit_hashes = [pr["merge_commit_sha"]]
+
     pprint(pr)
-    return 1
+    #return 1
 
-    if not args.yes and raw_input("This will destroy all local changes. " +
-                                  "Continue? [y/n]: ") != "y":
-        return 1
-    check_call("git reset --hard", shell=True)
-    check_call("git clean -df", shell=True)
-    check_call("git fetch", shell=True)
 
-    check_call("git checkout {}".format(args.from_branch), shell=True)
-    check_call("git pull", shell=True)
-
-    continue_backport = false
+    continue_backport = False
     to_branches = args.to_branches.split(",")
-    if var(args)["continue"]:
+    if vars(args)["continue"]:
         if len(check_output("git status -s", shell=True).strip()) > 0:
             print("Looks like you have uncommitted changes." +
                   " Please execute first: git cherry-pick --continue")
             return 1
 
-        args, to_branches = load_state()
-        continue_backport = true
+        to_branches = load_state(args)
+        continue_backport = True
+    else:
+        if not args.yes and raw_input("This will destroy all local changes. " +
+                                      "Continue? [y/n]: ") != "y":
+            return 1
+        check_call("git reset --hard", shell=True)
+        check_call("git clean -df", shell=True)
+        check_call("git fetch", shell=True)
+
+        check_call("git checkout {}".format(args.from_branch), shell=True)
+        check_call("git pull", shell=True)
 
     if args.remote:
         remote = args.remote
     else:
         remote = raw_input("To which remote should I push? (your fork): ")
 
-    for to_branch, i in enumerate(to_branches):
-        if continue_backport:
-            continue_backport = false
-        else:
-            tmp_branch = "backport_{}_{}".format(args.pr_number, to_branch)
+    for i, to_branch in enumerate(to_branches):
+        tmp_branch = "backport_{}_{}".format(args.pr_number, to_branch)
 
+        if continue_backport:
+            continue_backport = False
+        else:
             check_call("git checkout {}".format(to_branch), shell=True)
             check_call("git pull", shell=True)
 
@@ -145,15 +152,15 @@ def main():
         # get the github username from the remote where we pushed
         remote_url = check_output("git remote get-url {}".format(remote),
                                   shell=True)
-        remote_user = re.search("github.com:(.+)/beats", remote_url).group(1)
+        remote_user = re.search("github.com:(.+)/.+", remote_url).group(1)
 
         # create PR
         request = session.post(base + "/pulls", json=dict(
-            title="Cherry-pick #{} to {}: {}".format(args.pr_number, args.to_branch, original_pr["title"]),
+            title="Cherry-pick #{} to {}: {}".format(args.pr_number, to_branch, original_pr["title"]),
             head=remote_user + ":" + tmp_branch,
-            base=args.to_branch,
+            base=to_branch,
             body="Cherry-pick of PR #{} to {} branch. Original message: \n\n{}"
-            .format(args.pr_number, args.to_branch, original_pr["body"])
+            .format(args.pr_number, to_branch, original_pr["body"])
         ))
         if request.status_code > 299:
             print("Creating PR failed: {}".format(request.json()))
@@ -168,10 +175,11 @@ def main():
         session.delete(base + "/issues/{}/labels/needs_backport".format(args.pr_number))
 
         # get version and set a version label on the original PR
-        version = get_version(os.getcwd())
-        if version:
-            session.post(
-                base + "/issues/{}/labels".format(args.pr_number), json=["v" + version])
+        if not args.no_version:
+            version = get_version(os.getcwd())
+            if version:
+                session.post(
+                    base + "/issues/{}/labels".format(args.pr_number), json=["v" + version])
 
         print("\nDone. PR created: {}".format(new_pr["html_url"]))
         print("Please go and check it and add the review tags")
@@ -186,12 +194,13 @@ def get_version(beats_dir):
 
 def save_state(args, remaining_branches):
     with open(".backport.state", "w") as f:
-        json.dump({"args": args, "remaining_branches": remaining_branches}, f)
+        json.dump({"args": vars(args), "remaining_branches": remaining_branches}, f)
 
-def load_sate():
+def load_state(args):
     with open(".backport.state", "r") as f:
         obj = json.load(f)
-        return obj["args"], obj["remaining_branches"]
+        args.__dict__.update(obj["args"])
+        return obj["remaining_branches"]
 
 
 if __name__ == "__main__":
