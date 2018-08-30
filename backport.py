@@ -14,27 +14,13 @@ import json
 usage = """
 Example usage:
 
-./backport.py -b 6.x,6.3 2565 6490604aa0cf7fa61932a90700e6ca988fc8a527
+./backport.py -b 6.x,6.3 2565
 
 In case of backporting errors, fix them, then run:
 
 git cherry-pick --continue
-./dev-tools/cherrypick_pr --create_pr 5.0 2565 6490604aa0cf7fa61932a90700e6ca988fc8a527 --continue
+./backport.py -b 6.x,6.3 2565 --continue
 
-This script does the following:
-
-* cleanups both from_branch and to_branch (warning: drops local changes)
-* creates a temporary branch named something like "branch_2565"
-* calls the git cherry-pick command in this branch
-* after fixing the merge errors (if needed), pushes the branch to your
-  remote
-* if the --create_pr flag is used, it uses the GitHub API to create the PR
-  for you. Note that this requires you to have a Github token with the
-  public_repo scope in the `~/.elastic/github.token` file
-
-Note that you need to take the commit hashes from `git log` on the
-from_branch, copying the IDs from Github doesn't work in case we squashed the
-PR.
 """
 
 
@@ -85,9 +71,8 @@ def main():
     if not args.commit_hashes:
         args.commit_hashes = [pr["merge_commit_sha"]]
 
-    pprint(pr)
+    #pprint(pr)
     #return 1
-
 
     continue_backport = False
     to_branches = args.to_branches.split(",")
